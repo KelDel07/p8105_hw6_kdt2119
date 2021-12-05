@@ -1,0 +1,126 @@
+---
+title: "p8105_hw6_kdt2119"
+author: Kelvin Tamakloe
+date: December 4, 2021
+output: github_document
+---
+
+```{r load_libraries, message=FALSE}
+library(tidyverse)
+library(purrr)
+library(modelr)
+library(viridis)
+```
+
+## Problem 1
+
+**The code chunk below will perform the following function: Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).**
+
+```{r import_bwt_data, message=FALSE}
+birthweight_df = 
+  read_csv("birthweight.csv") %>%
+  mutate(babysex = factor(babysex, levels = c(1,2), labels = c("male", "female"))) %>%
+  mutate(frace = factor(frace, levels = c(1,2,3,4,8,9), labels = c("White", "Black",
+                        "Asian", "Puerto Rican", "Other", "Unknown"))) %>%
+  mutate(malform = factor(malform, levels = c(0,1), labels = c("absent", "present"))) %>%
+  mutate(mrace = factor(mrace, levels = c(1,2,3,4,8,9), labels = c("White", "Black",
+                        "Asian", "Puerto Rican", "Other", "Unknown")))
+colSums(is.na(birthweight_df))
+```
+The following variables were converted from numeric to factor variables: `babysex`, `frace`, `malform`, 
+and `mrace`.
+
+Further, the `birthweight_df` dataset has are no missing values (`NA` values).
+
+**The code chunk below will perform the following function: Propose a regression model for birthweight.** 
+
+The data was investigated to determine which variables may not be appropriate for inclusion in a proposed model.
+ 
+```{r investigate_bwt, message=FALSE}
+unique(pull(birthweight_df, pnumlbw))
+unique(pull(birthweight_df, pnumsga))
+```
+
+* The `pnumlbw` (previous number of low birth weight babies) variable has all values = 0 and will as such not be an informative variable for inclusion in the model. 
+
+* The `pnumsga` (number of prior small for gestational age babies) variable has all values = 0 and will as such not be an informative variable for inclusion in the model.
+
+For my initial attempt, I included variables that,based on prior knowledge, I suspect are appropriate predictors of birthweight. These include: `babysex`, `bhead`, `blength`, `delwt`, `frace`,`gaweeks`, `malform`, `momage`, `mrace`, `ppbmi`, `smoken` and `wtgain`.
+
+
+```{r model0, message=FALSE}
+model0 = lm(bwt ~ babysex + bhead + blength + delwt + frace+ gaweeks + malform + momage + 
+              mrace + ppbmi + smoken + wtgain, data = birthweight_df)
+summary(model0)
+```
+
+The model's output suggests `frace`, `malform`, `momage`, and `wtgain` are not significant predictors of `bwt` (p-values > 0.05). These variables will be removed from the model and the model for `bwt` revised as below. 
+
+```{r model1, message=FALSE}
+model1 = lm(bwt ~ babysex + bhead + blength + delwt + gaweeks + mrace + ppbmi + smoken, data = birthweight_df)
+summary(model1)
+model1 %>%
+  broom::tidy()
+```
+
+This model's output shows that all of the variables included are significant predictors of `bwt`. The subcategory of `mrace` mother's race: Asian is not significant. However, the other subcategories of `mrace` are. As the variable is categorical, all levels would be included and remain in the model. 
+
+**The code chunk below will perform the following function: Show a plot of model residuals against fitted values.**
+
+```{r model_diagnostics, message=FALSE}
+modelr::add_residuals(birthweight_df, model1)
+modelr::add_predictions(birthweight_df, model1)
+birthweight_df %>%
+  modelr::add_residuals(model1) %>%
+  modelr::add_predictions(model1) %>%
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(color = "#21A8BD", alpha = 0.5) +
+  labs(x = "Fitted Values", y = "Residuals") + 
+  ggtitle("Plot of Model Residuals against Fitted Values") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+**The code chunk below will perform the following function: Compare your model to two others in terms of the cross-validated prediction error**
+
+* One using length at birth and gestational age as predictors (main effects only)
+
+* One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+
+```{r model_comparisons, message=FALSE}
+cv_df =
+  crossv_mc(birthweight_df, 50) %>%
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+cv_df2 = 
+cv_df %>%
+  mutate(
+    model1 = map(train, ~lm(bwt ~ delwt + mrace + smoken + gaweeks + ppbmi + babysex + bhead + blength, data = .x)), 
+    model2 = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)), 
+    model3 = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .x))
+  ) %>%
+  mutate(
+    rmse_model1 = map2_dbl(model1, test, ~rmse(model = .x, data = .y)), 
+    rmse_model2 = map2_dbl(model2, test, ~rmse(model = .x, data = .y)),
+    rmse_model3 = map2_dbl(model3, test, ~rmse(model = .x, data = .y))
+  )
+cv_df2 %>% 
+  select(
+    starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+    ggplot(aes(x = model, y = rmse, fill = model)) +
+    geom_boxplot() +
+    scale_fill_viridis_d(option = "D") +
+    labs(x = "Model", y = "RMSE", col = "Model") +
+    ggtitle("RMSE Plots for All Models") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5), legend.position = "none")
+```
+
+From the plot, my model (model1) has a smaller RMSE than the RMSE of the other two models (model2 and model3). This shows that my model is a better fit for the data than the two other models. Model 2 (the model that without interaction terms) has the highest RMSE, suggesting that of the three models, it is the worst fitting model for the data. 
